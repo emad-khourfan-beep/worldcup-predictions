@@ -1,97 +1,87 @@
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>توقعات كأس العالم</title>
-
-<style>
-body{
-  margin:0;
-  font-family:Arial,Tahoma,sans-serif;
-  background:#07172f;
-  color:white;
-  text-align:center;
-}
-.container{
-  max-width:700px;
-  margin:auto;
-  padding:20px;
-}
-h1{
-  color:#ffd54a;
-}
-.card{
-  background:#10284f;
-  padding:20px;
-  border-radius:18px;
-  margin-top:20px;
-}
-.match{
-  background:#173866;
-  margin:15px 0;
-  padding:15px;
-  border-radius:12px;
-}
-input{
-  padding:12px;
-  width:90%;
-  margin:8px;
-  border-radius:8px;
-  border:0;
-  font-size:16px;
-}
-button{
-  background:#ffd54a;
-  color:#07172f;
-  border:0;
-  padding:15px;
-  width:95%;
-  border-radius:10px;
-  font-size:18px;
-  font-weight:bold;
-}
-</style>
-</head>
-
-<body>
-
-<div class="container">
-  <h1>🏆 توقعات كأس العالم</h1>
-
-  <div class="card">
-    <form id="predictionForm">
-      <input id="playerName" placeholder="اكتب اسمك" required>
-
-      <div id="matches">جاري تحميل المباريات...</div>
-
-      <button type="submit">إرسال التوقع</button>
-    </form>
-  </div>
-</div>
-
 <script>
 const GOOGLE_SCRIPT_URL =
 "https://script.google.com/macros/s/AKfycbxzzsAiKHUaMZhU98fUS9DU7sghFXSZblwhB1LtW-kA-h3W1iKMTlys89MVHMO6bkCg/exec";
 
 let matches = [];
 
+const flags = {
+  "قطر":"🇶🇦","سويسرا":"🇨🇭","تركيا":"🇹🇷","أستراليا":"🇦🇺",
+  "ألمانيا":"🇩🇪","كوراساو":"🇨🇼","هولندا":"🇳🇱","اليابان":"🇯🇵",
+  "ساحل العاج":"🇨🇮","الإكوادور":"🇪🇨","السويد":"🇸🇪","تونس":"🇹🇳",
+  "البرازيل":"🇧🇷","المغرب":"🇲🇦","بلجيكا":"🇧🇪","مصر":"🇪🇬",
+  "السعودية":"🇸🇦","الأوروغواي":"🇺🇾","إيران":"🇮🇷","نيوزيلندا":"🇳🇿"
+};
+
+function getMatchDateTime(match) {
+  return new Date(`${match.date}T${match.time}:00+04:00`);
+}
+
+function getCountdown(match) {
+  const now = new Date();
+  const start = getMatchDateTime(match);
+  const diff = start - now;
+
+  if (diff <= 0) return "بدأت المباراة";
+
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+  return `متبقي ${hours} ساعة و ${minutes} دقيقة`;
+}
+
+function isPredictionClosed(match) {
+  const now = new Date();
+  const start = getMatchDateTime(match);
+  const closeTime = new Date(start.getTime() - 60 * 60 * 1000);
+  return now >= closeTime;
+}
+
 async function loadMatches() {
-  const response = await fetch(GOOGLE_SCRIPT_URL);
-  matches = await response.json();
-  renderMatches();
+  try {
+    const response = await fetch(GOOGLE_SCRIPT_URL);
+    matches = await response.json();
+    renderMatches();
+  } catch (error) {
+    document.getElementById("matches").innerHTML =
+      "❌ لم يتم تحميل المباريات. تأكد من رابط Apps Script.";
+  }
 }
 
 function renderMatches() {
   const container = document.getElementById("matches");
   container.innerHTML = "";
 
+  if (matches.length === 0) {
+    container.innerHTML = "لا توجد مباريات مضافة اليوم.";
+    return;
+  }
+
   matches.forEach(match => {
+    const homeFlag = flags[match.home] || "🏳️";
+    const awayFlag = flags[match.away] || "🏳️";
+    const closed = isPredictionClosed(match);
+
     container.innerHTML += `
       <div class="match">
-        <h3>${match.home} × ${match.away}</h3>
-        <input type="number" min="0" id="home_${match.id}" placeholder="أهداف ${match.home}" required>
-        <input type="number" min="0" id="away_${match.id}" placeholder="أهداف ${match.away}" required>
+        <div class="match-title">
+          <div class="flags">${homeFlag} × ${awayFlag}</div>
+          ${match.home} × ${match.away}
+          <br>
+          <small>⏰ وقت المباراة: ${match.time}</small>
+          <br>
+          <small>${getCountdown(match)}</small>
+          <br>
+          <small style="color:${closed ? '#ff6b6b' : '#7CFF9B'}">
+            ${closed ? '🔒 التوقع مغلق' : '✅ التوقع مفتوح'}
+          </small>
+        </div>
+
+        <div class="score-grid">
+          <input type="number" min="0" id="home_${match.id}" 
+            placeholder="أهداف ${match.home}" ${closed ? "disabled" : "required"}>
+          <input type="number" min="0" id="away_${match.id}" 
+            placeholder="أهداف ${match.away}" ${closed ? "disabled" : "required"}>
+        </div>
       </div>
     `;
   });
@@ -100,9 +90,17 @@ function renderMatches() {
 document.getElementById("predictionForm").addEventListener("submit", async function(e) {
   e.preventDefault();
 
-  const playerName = document.getElementById("playerName").value;
+  const openMatches = matches.filter(match => !isPredictionClosed(match));
 
-  const predictions = matches.map(match => ({
+  if (openMatches.length === 0) {
+    alert("🔒 تم إغلاق التوقعات لجميع مباريات اليوم");
+    return;
+  }
+
+  const playerName = document.getElementById("playerName").value.trim();
+  const whatsapp = document.getElementById("whatsapp") ? document.getElementById("whatsapp").value.trim() : "";
+
+  const predictions = openMatches.map(match => ({
     id: match.id,
     homeTeam: match.home,
     awayTeam: match.away,
@@ -113,16 +111,19 @@ document.getElementById("predictionForm").addEventListener("submit", async funct
   await fetch(GOOGLE_SCRIPT_URL, {
     method: "POST",
     mode: "no-cors",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({ playerName, predictions })
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      playerName,
+      whatsapp,
+      predictions
+    })
   });
 
   alert("✅ تم إرسال توقعك بنجاح");
   this.reset();
+  renderMatches();
 });
 
 loadMatches();
+setInterval(renderMatches, 60000);
 </script>
-
-</body>
-</html>index.html
