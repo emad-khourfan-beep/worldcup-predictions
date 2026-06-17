@@ -1,341 +1,400 @@
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>توقعات كأس العالم</title>
+/******************************************************
+ WORLD CUP PREDICTIONS â€” GOOGLE APPS SCRIPT
+ GitHub Pages + Google Sheets | GMT | No API required
+******************************************************/
 
-<style>
-*{box-sizing:border-box}
+const SPREADSHEET_ID = "";
+const DEFAULT_TIMEZONE = "GMT";
+const DEFAULT_CLOSE_BEFORE_MINUTES = 60;
 
-body{
-  margin:0;
-  font-family:Arial,Tahoma,sans-serif;
-  background:linear-gradient(135deg,#06142e,#0b2d5f,#06142e);
-  color:white;
+function getSS() {
+  if (SPREADSHEET_ID && SPREADSHEET_ID.trim() !== "") return SpreadsheetApp.openById(SPREADSHEET_ID.trim());
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error("Open Apps Script from inside the Google Sheet, or paste Sheet ID in SPREADSHEET_ID.");
+  return ss;
 }
 
-.container{
-  max-width:920px;
-  margin:auto;
-  padding:20px;
+function setupSheets() {
+  ensureSheet("Settings", ["Key", "Value"]);
+  ensureSheet("All Matches", ["Match ID", "Date", "Time", "Team 1", "Team 2", "Stage", "Venue"]);
+  ensureSheet("Matches", ["Match ID", "Date", "Time", "Team 1", "Team 2", "Stage", "Venue", "Active"]);
+  ensureSheet("Prediction Details", ["Submitted At", "Last Updated At", "Player Key", "Name", "WhatsApp", "Match ID", "Match", "Team 1 Prediction", "Team 2 Prediction", "Prediction", "Status", "Actual Result", "Points", "Reason"]);
+  ensureSheet("Results", ["Match ID", "Team 1 Goals", "Team 2 Goals", "Status"]);
+  ensureSheet("Leaderboard", ["Rank", "Name", "WhatsApp", "Total Points", "Exact Scores", "Correct Outcomes", "Predictions Count"]);
+  ensureSetting("TIMEZONE", DEFAULT_TIMEZONE);
+  ensureSetting("CLOSE_BEFORE_MINUTES", DEFAULT_CLOSE_BEFORE_MINUTES);
+  ensureSetting("ACTIVE_DATE", "");
 }
 
-.hero{
-  text-align:center;
-  padding:35px 10px;
+function doGet(e) {
+  setupSheets();
+  const action = e && e.parameter && e.parameter.action ? String(e.parameter.action).toLowerCase() : "matches";
+  if (action === "stats") return json(getStats());
+  if (action === "leaderboard") return getLeaderboard();
+  if (action === "results") return getResults();
+  if (action === "predictions") return getPredictionsList();
+  if (action === "sync") { updateTodayMatches(); calculateAllPoints(); return json({status:"success", message:"Synced successfully"}); }
+  if (action === "health") return json({status:"ok", system:"World Cup Predictions", time:new Date()});
+  return getMatches();
 }
 
-.hero h1{
-  font-size:36px;
-  margin:0;
-  color:#ffd54a;
-}
-
-.hero p{
-  color:#dbe8ff;
-}
-
-.card{
-  background:rgba(255,255,255,.08);
-  border:1px solid rgba(255,255,255,.18);
-  border-radius:28px;
-  padding:22px;
-  margin-bottom:22px;
-  box-shadow:0 20px 55px rgba(0,0,0,.35);
-}
-
-input{
-  width:100%;
-  padding:15px;
-  margin:9px 0;
-  border:0;
-  border-radius:14px;
-  font-size:16px;
-}
-
-.match{
-  background:linear-gradient(145deg,#12366f,#071b3c);
-  border:1px solid rgba(255,213,74,.35);
-  border-radius:24px;
-  padding:20px;
-  margin:18px 0;
-}
-
-.teams{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:12px;
-}
-
-.team{
-  width:40%;
-  text-align:center;
-}
-
-.flag{
-  font-size:48px;
-  background:rgba(255,255,255,.12);
-  border-radius:20px;
-  padding:12px;
-  margin-bottom:8px;
-}
-
-.vs{
-  font-size:24px;
-  font-weight:bold;
-  color:#ffd54a;
-}
-
-.team-name{
-  font-size:17px;
-  font-weight:bold;
-}
-
-.match-time{
-  text-align:center;
-  margin:15px 0;
-  color:#ffd54a;
-  font-weight:bold;
-}
-
-.score-grid{
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:12px;
-}
-
-button{
-  width:100%;
-  border:0;
-  padding:17px;
-  border-radius:16px;
-  background:linear-gradient(135deg,#ffd54a,#c8951e);
-  color:#06142e;
-  font-size:19px;
-  font-weight:bold;
-  cursor:pointer;
-}
-
-table{
-  width:100%;
-  border-collapse:collapse;
-}
-
-th,td{
-  padding:12px;
-  border-bottom:1px solid rgba(255,255,255,.15);
-  text-align:center;
-}
-
-th{
-  background:#ffd54a;
-  color:#06142e;
-}
-
-.footer{
-  text-align:center;
-  color:#b7c8ec;
-  font-size:13px;
-  margin:25px 0;
-}
-
-@media(max-width:600px){
-  .hero h1{font-size:28px}
-  .score-grid{grid-template-columns:1fr}
-}
-</style>
-</head>
-
-<body>
-
-<div class="container">
-
-  <div class="hero">
-    <h1>🏆 توقعات كأس العالم</h1>
-    <p>توقع النتيجة، اجمع النقاط، ونافس أصدقاءك</p>
-  </div>
-
-  <div class="card">
-    <form id="predictionForm">
-      <input id="playerName" placeholder="👤 اكتب اسمك" required>
-      <input id="whatsapp" placeholder="📱 رقم الواتساب اختياري">
-
-      <div id="matches">جاري تحميل المباريات...</div>
-
-      <button type="submit">إرسال التوقع</button>
-    </form>
-  </div>
-
-  <div class="card">
-    <h2>📊 نظام النقاط</h2>
-    🎯 10 نقاط = النتيجة الصحيحة بالكامل<br>
-    ✅ 5 نقاط = توقع الفائز أو التعادل<br>
-    ⚽ 2 نقطة = توقع أهداف فريق واحد بشكل صحيح
-  </div>
-
-  <div class="card">
-    <h2>🏅 ترتيب الفائزين</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>المركز</th>
-          <th>الاسم</th>
-          <th>النقاط</th>
-        </tr>
-      </thead>
-      <tbody id="leaderboardBody">
-        <tr>
-          <td colspan="3">سيظهر الترتيب بعد احتساب النتائج</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <div class="footer">
-    يتم تحديث المباريات يومياً من Google Sheets
-  </div>
-
-</div>
-
-<script>
-const GOOGLE_SCRIPT_URL =
-"https://script.google.com/macros/s/AKfycbxjY8Js-gSoTFGCKR7OehQiGqmCiKkFBe2cCTQRfLUdUHhkrR9ykhRO5gJuQ3eBRZ6_/exec";
-let matches = [];
-
-const flags = {
-  "إسبانيا":"🇪🇸",
-  "الرأس الأخضر":"🇨🇻",
-  "بلجيكا":"🇧🇪",
-  "مصر":"🇪🇬",
-  "السعودية":"🇸🇦",
-  "الأوروغواي":"🇺🇾",
-  "إيران":"🇮🇷",
-  "نيوزيلندا":"🇳🇿",
-  "ألمانيا":"🇩🇪",
-  "كوراساو":"🇨🇼",
-  "هولندا":"🇳🇱",
-  "اليابان":"🇯🇵",
-  "ساحل العاج":"🇨🇮",
-  "الإكوادور":"🇪🇨",
-  "السويد":"🇸🇪",
-  "تونس":"🇹🇳",
-  "قطر":"🇶🇦",
-  "سويسرا":"🇨🇭",
-  "البرازيل":"🇧🇷",
-  "المغرب":"🇲🇦",
-  "تركيا":"🇹🇷",
-  "أستراليا":"🇦🇺"
-};
-
-function flagOf(team){
-  return flags[team] || "🏳️";
-}
-
-async function loadMatches(){
-  try{
-    const response = await fetch(GOOGLE_SCRIPT_URL);
-    matches = await response.json();
-    renderMatches();
-  }catch(error){
-    document.getElementById("matches").innerHTML = "❌ فشل تحميل المباريات";
-  }
-}
-
-function renderMatches(){
-  const container = document.getElementById("matches");
-  container.innerHTML = "";
-
-  if(matches.length === 0){
-    container.innerHTML = "لا توجد مباريات حالياً";
-    return;
-  }
-
-  matches.forEach(match => {
-    container.innerHTML += `
-      <div class="match">
-        <div class="teams">
-          <div class="team">
-            <div class="flag">${flagOf(match.home)}</div>
-            <div class="team-name">${match.home}</div>
-          </div>
-
-          <div class="vs">VS</div>
-
-          <div class="team">
-            <div class="flag">${flagOf(match.away)}</div>
-            <div class="team-name">${match.away}</div>
-          </div>
-        </div>
-
-        <div class="match-time">⏰ ${match.time || ""}</div>
-
-        <div class="score-grid">
-          <input type="number" min="0" id="home_${match.id}" placeholder="أهداف ${match.home}" required>
-          <input type="number" min="0" id="away_${match.id}" placeholder="أهداف ${match.away}" required>
-        </div>
-      </div>
-    `;
-  });
-}
-
-document.getElementById("predictionForm").addEventListener("submit", async function(e){
-  e.preventDefault();
-
-  const playerName = document.getElementById("playerName").value.trim();
-  const whatsapp = document.getElementById("whatsapp").value.trim();
-
-  const predictions = matches.map(match => ({
-    id: match.id,
-    homeTeam: match.home,
-    awayTeam: match.away,
-    homeGoals: document.getElementById(`home_${match.id}`).value,
-    awayGoals: document.getElementById(`away_${match.id}`).value
-  }));
-
-  await fetch(GOOGLE_SCRIPT_URL, {
-    method:"POST",
-    mode:"no-cors",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({playerName, whatsapp, predictions})
-  });
-
-  alert("✅ تم إرسال التوقع بنجاح");
-  this.reset();
-});
-
-async function loadLeaderboard(){
-  try{
-    const response = await fetch(GOOGLE_SCRIPT_URL + "?action=leaderboard");
-    const data = await response.json();
-    const body = document.getElementById("leaderboardBody");
-
-    body.innerHTML = "";
-
-    if(!data || data.length === 0){
-      body.innerHTML = `<tr><td colspan="3">سيظهر الترتيب بعد احتساب النتائج</td></tr>`;
-      return;
-    }
-
-    data.forEach((player, index) => {
-      body.innerHTML += `
-        <tr>
-          <td>${index + 1}</td>
-          <td>${player.name}</td>
-          <td>${player.points}</td>
-        </tr>
-      `;
+function doPost(e) {
+  setupSheets();
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const body = e && e.postData && e.postData.contents ? e.postData.contents : "{}";
+    const data = JSON.parse(body);
+    const playerName = cleanText(data.playerName);
+    const whatsapp = cleanText(data.whatsapp || "");
+    const predictions = Array.isArray(data.predictions) ? data.predictions : [];
+    if (!playerName) return json({status:"error", message:"Player name is required"});
+    if (predictions.length === 0) return json({status:"error", message:"No predictions received"});
+    const matchesMap = getMatchesMap();
+    const playerKey = createPlayerKey(playerName, whatsapp);
+    let saved=0, updated=0, rejected=0;
+    predictions.forEach(function(p){
+      const matchId = cleanText(p.id);
+      const match = matchesMap[matchId];
+      if (!match || isPredictionClosed(match.date, match.time)) { rejected++; return; }
+      const homeGoals = parseGoal(p.homeGoals);
+      const awayGoals = parseGoal(p.awayGoals);
+      if (homeGoals === null || awayGoals === null) { rejected++; return; }
+      const res = saveOrUpdatePrediction({playerKey, playerName, whatsapp, matchId, match, homeGoals, awayGoals});
+      if (res === "saved") saved++;
+      if (res === "updated") updated++;
     });
-  }catch(error){
-    console.log(error);
+    return json({status:"success", saved, updated, rejected});
+  } catch (err) {
+    return json({status:"error", message: err.message});
+  } finally {
+    lock.releaseLock();
   }
 }
 
-loadMatches();
-loadLeaderboard();
-setInterval(loadLeaderboard, 60000);
-</script>
+function saveOrUpdatePrediction(data) {
+  const ss = getSS();
+  const sheet = ss.getSheetByName("Prediction Details");
+  const rows = sheet.getDataRange().getValues();
+  const predictionText = data.homeGoals + "-" + data.awayGoals;
+  const matchText = data.match.home + " Ã— " + data.match.away;
+  for (let i=1; i<rows.length; i++) {
+    if (cleanText(rows[i][2]) === data.playerKey && cleanText(rows[i][5]) === data.matchId) {
+      const r = i + 1;
+      sheet.getRange(r, 2).setValue(new Date());
+      sheet.getRange(r, 4).setValue(data.playerName);
+      sheet.getRange(r, 5).setValue(data.whatsapp);
+      sheet.getRange(r, 7).setValue(matchText);
+      sheet.getRange(r, 8).setValue(data.homeGoals);
+      sheet.getRange(r, 9).setValue(data.awayGoals);
+      sheet.getRange(r, 10).setValue(predictionText);
+      sheet.getRange(r, 11).setValue("Updated");
+      sheet.getRange(r, 12, 1, 3).clearContent();
+      return "updated";
+    }
+  }
+  sheet.appendRow([new Date(), new Date(), data.playerKey, data.playerName, data.whatsapp, data.matchId, matchText, data.homeGoals, data.awayGoals, predictionText, "Submitted", "", "", ""]);
+  return "saved";
+}
 
-</body>
-</html>
+function updateTodayMatches() {
+  setupSheets();
+  const ss = getSS();
+  const allSheet = ss.getSheetByName("All Matches");
+  const todaySheet = ss.getSheetByName("Matches");
+  const settings = getSettings();
+  const activeDate = getSettingValue("ACTIVE_DATE");
+  const today = activeDate || Utilities.formatDate(new Date(), settings.timezone, "yyyy-MM-dd");
+  const rows = allSheet.getDataRange().getValues();
+  todaySheet.clearContents();
+  todaySheet.appendRow(["Match ID", "Date", "Time", "Team 1", "Team 2", "Stage", "Venue", "Active"]);
+  let out=[];
+  for (let i=1; i<rows.length; i++) {
+    const id=cleanText(rows[i][0]), date=formatDate(rows[i][1]), time=formatTime(rows[i][2]);
+    const team1=cleanText(rows[i][3]), team2=cleanText(rows[i][4]), stage=cleanText(rows[i][5]||""), venue=cleanText(rows[i][6]||"");
+    if (!id || !date || !time || !team1 || !team2) continue;
+    if (date === today) out.push([id, date, time, team1, team2, stage, venue, "YES"]);
+  }
+  if (out.length) todaySheet.getRange(2, 1, out.length, 8).setValues(out);
+  SpreadsheetApp.flush();
+  return out.length;
+}
+
+function calculateAllPoints() {
+  setupSheets();
+  const ss = getSS();
+  const predictionSheet = ss.getSheetByName("Prediction Details");
+  const resultsSheet = ss.getSheetByName("Results");
+  const predictionRows = predictionSheet.getDataRange().getValues();
+  const resultRows = resultsSheet.getDataRange().getValues();
+  const resultMap = {};
+  for (let i=1; i<resultRows.length; i++) {
+    const matchId=cleanText(resultRows[i][0]);
+    const h=resultRows[i][1], a=resultRows[i][2];
+    if (!matchId || h === "" || a === "") continue;
+    resultMap[matchId] = {home:Number(h), away:Number(a)};
+  }
+  for (let i=1; i<predictionRows.length; i++) {
+    const rowNumber=i+1;
+    const matchId=cleanText(predictionRows[i][5]);
+    const predictedHome=Number(predictionRows[i][7]);
+    const predictedAway=Number(predictionRows[i][8]);
+    if (!matchId || !resultMap[matchId] || isNaN(predictedHome) || isNaN(predictedAway)) continue;
+    const actualHome=resultMap[matchId].home, actualAway=resultMap[matchId].away;
+    const score=calculateScore(predictedHome, predictedAway, actualHome, actualAway);
+    predictionSheet.getRange(rowNumber, 11).setValue("Calculated");
+    predictionSheet.getRange(rowNumber, 12).setValue(actualHome + "-" + actualAway);
+    predictionSheet.getRange(rowNumber, 13).setValue(score.points);
+    predictionSheet.getRange(rowNumber, 14).setValue(score.reason);
+  }
+  updateLeaderboard();
+}
+
+function calculateScore(ph, pa, ah, aa) {
+  if (ph === ah && pa === aa) return {points:10, reason:"Ø§Ù„Ù†ØªÙŠØ¬Ø© Ø§Ù„ØµØ­ÙŠØ­Ø© Ø¨Ø§Ù„ÙƒØ§Ù…Ù„"};
+  let points=0, reasons=[];
+  const pr = ph > pa ? "HOME" : ph < pa ? "AWAY" : "DRAW";
+  const ar = ah > aa ? "HOME" : ah < aa ? "AWAY" : "DRAW";
+  if (pr === ar) { points += 5; reasons.push("Ø§Ù„ÙØ§Ø¦Ø² Ø£Ùˆ Ø§Ù„ØªØ¹Ø§Ø¯Ù„ ØµØ­ÙŠØ­"); }
+  if (ph === ah) { points += 2; reasons.push("Ø£Ù‡Ø¯Ø§Ù Ø§Ù„ÙØ±ÙŠÙ‚ Ø§Ù„Ø£ÙˆÙ„ ØµØ­ÙŠØ­Ø©"); }
+  if (pa === aa) { points += 2; reasons.push("Ø£Ù‡Ø¯Ø§Ù Ø§Ù„ÙØ±ÙŠÙ‚ Ø§Ù„Ø«Ø§Ù†ÙŠ ØµØ­ÙŠØ­Ø©"); }
+  if (points === 0) reasons.push("ØªÙˆÙ‚Ø¹ Ø®Ø§Ø·Ø¦");
+  return {points, reason:reasons.join(" + ")};
+}
+
+function updateLeaderboard() {
+  const ss=getSS();
+  const predictionSheet=ss.getSheetByName("Prediction Details");
+  const leaderboardSheet=ss.getSheetByName("Leaderboard");
+  const rows=predictionSheet.getDataRange().getValues();
+  const players={};
+  for (let i=1; i<rows.length; i++) {
+    const key=cleanText(rows[i][2]);
+    const name=cleanText(rows[i][3]);
+    const whatsapp=cleanText(rows[i][4]);
+    const points=Number(rows[i][12]) || 0;
+    const reason=cleanText(rows[i][13]);
+    if (!key || !name) continue;
+    if (!players[key]) players[key] = {name, whatsapp, points:0, exact:0, outcomes:0, predictions:0};
+    players[key].points += points;
+    players[key].predictions++;
+    if (reason.indexOf("Ø§Ù„Ù†ØªÙŠØ¬Ø© Ø§Ù„ØµØ­ÙŠØ­Ø© Ø¨Ø§Ù„ÙƒØ§Ù…Ù„") !== -1) { players[key].exact++; players[key].outcomes++; }
+    else if (reason.indexOf("Ø§Ù„ÙØ§Ø¦Ø² Ø£Ùˆ Ø§Ù„ØªØ¹Ø§Ø¯Ù„ ØµØ­ÙŠØ­") !== -1) players[key].outcomes++;
+  }
+  const ranking=Object.values(players).sort(function(a,b){
+    if (b.points !== a.points) return b.points-a.points;
+    if (b.exact !== a.exact) return b.exact-a.exact;
+    return b.outcomes-a.outcomes;
+  });
+  leaderboardSheet.clearContents();
+  leaderboardSheet.appendRow(["Rank", "Name", "WhatsApp", "Total Points", "Exact Scores", "Correct Outcomes", "Predictions Count"]);
+  ranking.forEach(function(p, index){ leaderboardSheet.appendRow([index+1, p.name, p.whatsapp, p.points, p.exact, p.outcomes, p.predictions]); });
+}
+
+function getMatches() {
+  setupSheets();
+  const ss=getSS();
+  const sheet=ss.getSheetByName("Matches");
+  let rows=sheet.getDataRange().getValues();
+  const data=[];
+  for (let i=1; i<rows.length; i++) {
+    const active=cleanText(rows[i][7]).toUpperCase();
+    if (active !== "YES" && active !== "TRUE" && active !== "Y" && active !== "Ù†Ø¹Ù…") continue;
+    const match={id:cleanText(rows[i][0]), date:formatDate(rows[i][1]), time:formatTime(rows[i][2]), home:cleanText(rows[i][3]), away:cleanText(rows[i][4]), stage:cleanText(rows[i][5]||""), venue:cleanText(rows[i][6]||"")};
+    match.closed=isPredictionClosed(match.date, match.time);
+    match.closeText=getCloseText(match.date, match.time);
+    data.push(match);
+  }
+  return json(data);
+}
+
+function getLeaderboard() {
+  setupSheets();
+  const rows=getSS().getSheetByName("Leaderboard").getDataRange().getValues();
+  const data=[];
+  for (let i=1; i<rows.length; i++) data.push({rank:rows[i][0], name:rows[i][1], whatsapp:rows[i][2], points:rows[i][3], exact:rows[i][4], outcomes:rows[i][5], predictions:rows[i][6]});
+  return json(data);
+}
+
+function getResults() {
+  setupSheets();
+  const rows=getSS().getSheetByName("Results").getDataRange().getValues();
+  const allMatches=getAllMatchesMap();
+  const data=[];
+  for (let i=1; i<rows.length; i++) {
+    const id=cleanText(rows[i][0]);
+    const h=rows[i][1], a=rows[i][2];
+    const status=cleanText(rows[i][3]||"FT");
+    if (!id || h === "" || a === "") continue;
+    const match=allMatches[id];
+    data.push({id, date:match?match.date:"", time:match?match.time:"", match:match?match.home+" Ã— "+match.away:id, result:h+"-"+a, status});
+  }
+  data.sort(function(a,b){ return String(b.date+" "+b.time).localeCompare(String(a.date+" "+a.time)); });
+  return json(data);
+}
+
+function getPredictionsList() {
+  setupSheets();
+  const rows=getSS().getSheetByName("Prediction Details").getDataRange().getValues();
+  const data=[];
+  for (let i=1; i<rows.length; i++) {
+    data.push({name:rows[i][3]||"", match:rows[i][6]||"", prediction:rows[i][9]||"", actual:rows[i][11]||"", points:rows[i][12]||0, reason:rows[i][13]||""});
+  }
+  data.reverse();
+  return json(data.slice(0, 50));
+}
+
+function getStats() {
+  const ss=getSS();
+  const sheet=ss.getSheetByName("Prediction Details");
+  if (!sheet || sheet.getLastRow() < 2) return {playersCount:0, predictionsCount:0};
+  const rows=sheet.getRange(2,1,sheet.getLastRow()-1,sheet.getLastColumn()).getValues();
+  const players={};
+  let predictionsCount=0;
+  rows.forEach(function(row){
+    const key=cleanText(row[2]);
+    const name=cleanText(row[3]);
+    const matchId=cleanText(row[5]);
+    if (matchId) predictionsCount++;
+    if (key) players[key]=true;
+    else if (name) players[name]=true;
+  });
+  return {playersCount:Object.keys(players).length, predictionsCount};
+}
+
+function getMatchesMap() {
+  const rows=getSS().getSheetByName("Matches").getDataRange().getValues();
+  const map={};
+  for (let i=1; i<rows.length; i++) {
+    const id=cleanText(rows[i][0]); if (!id) continue;
+    map[id]={id, date:formatDate(rows[i][1]), time:formatTime(rows[i][2]), home:cleanText(rows[i][3]), away:cleanText(rows[i][4]), stage:cleanText(rows[i][5]||""), venue:cleanText(rows[i][6]||"")};
+  }
+  return map;
+}
+
+function getAllMatchesMap() {
+  const rows=getSS().getSheetByName("All Matches").getDataRange().getValues();
+  const map={};
+  for (let i=1; i<rows.length; i++) {
+    const id=cleanText(rows[i][0]); if (!id) continue;
+    map[id]={id, date:formatDate(rows[i][1]), time:formatTime(rows[i][2]), home:cleanText(rows[i][3]), away:cleanText(rows[i][4]), stage:cleanText(rows[i][5]||""), venue:cleanText(rows[i][6]||"")};
+  }
+  return map;
+}
+
+function createAutomaticTriggers() {
+  setupSheets();
+  const handlers=["updateTodayMatches", "calculateAllPoints"];
+  ScriptApp.getProjectTriggers().forEach(function(t){ if (handlers.indexOf(t.getHandlerFunction()) !== -1) ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger("updateTodayMatches").timeBased().everyDays(1).atHour(0).nearMinute(5).create();
+  ScriptApp.newTrigger("calculateAllPoints").timeBased().everyMinutes(15).create();
+}
+
+function rebuildSystem() { setupSheets(); updateTodayMatches(); calculateAllPoints(); createAutomaticTriggers(); return json({status:"success", message:"System rebuilt successfully"}); }
+
+function isPredictionClosed(dateValue, timeValue) {
+  const settings=getSettings();
+  const start=parseGMTDateTime(dateValue, timeValue);
+  if (!start) return false;
+  const close=new Date(start.getTime() - settings.closeBeforeMinutes*60*1000);
+  return new Date() >= close;
+}
+function getCloseText(dateValue, timeValue) {
+  const settings=getSettings();
+  const start=parseGMTDateTime(dateValue, timeValue);
+  if (!start) return "";
+  const close=new Date(start.getTime() - settings.closeBeforeMinutes*60*1000);
+  return Utilities.formatDate(close, settings.timezone, "yyyy-MM-dd HH:mm");
+}
+function parseGMTDateTime(dateValue, timeValue) {
+  const date=formatDate(dateValue), time=formatTime(timeValue);
+  if (!date || !time) return null;
+  const d=new Date(date + "T" + time + ":00Z");
+  return isNaN(d.getTime()) ? null : d;
+}
+function getSettings() {
+  const rows=getSS().getSheetByName("Settings").getDataRange().getValues();
+  const settings={timezone:DEFAULT_TIMEZONE, closeBeforeMinutes:DEFAULT_CLOSE_BEFORE_MINUTES};
+  for (let i=1; i<rows.length; i++) {
+    const key=cleanText(rows[i][0]).toUpperCase();
+    const value=rows[i][1];
+    if (key === "TIMEZONE" && value) settings.timezone=String(value).trim();
+    if (key === "CLOSE_BEFORE_MINUTES" && value !== "") settings.closeBeforeMinutes=Number(value) || DEFAULT_CLOSE_BEFORE_MINUTES;
+  }
+  return settings;
+}
+function getSettingValue(key) {
+  const sheet=getSS().getSheetByName("Settings");
+  if (!sheet) return "";
+  const rows=sheet.getDataRange().getValues();
+  for (let i=1; i<rows.length; i++) if (cleanText(rows[i][0]).toUpperCase() === String(key).toUpperCase()) return cleanText(rows[i][1]);
+  return "";
+}
+function ensureSheet(name, headers) {
+  const ss=getSS();
+  let sheet=ss.getSheetByName(name);
+  if (!sheet) sheet=ss.insertSheet(name);
+  if (sheet.getLastRow() === 0) sheet.appendRow(headers);
+}
+function ensureSetting(key, value) {
+  const sheet=getSS().getSheetByName("Settings");
+  const rows=sheet.getDataRange().getValues();
+  for (let i=1; i<rows.length; i++) if (cleanText(rows[i][0]).toUpperCase() === String(key).toUpperCase()) return;
+  sheet.appendRow([key, value]);
+}
+function formatDate(value) {
+  if (Object.prototype.toString.call(value) === "[object Date]") return Utilities.formatDate(value, DEFAULT_TIMEZONE, "yyyy-MM-dd");
+  const text=cleanText(value);
+  let m=text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) return m[1]+"-"+String(m[2]).padStart(2,"0")+"-"+String(m[3]).padStart(2,"0");
+  m=text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return m[3]+"-"+String(m[1]).padStart(2,"0")+"-"+String(m[2]).padStart(2,"0");
+  return text;
+}
+function formatTime(value) {
+  if (Object.prototype.toString.call(value) === "[object Date]") return Utilities.formatDate(value, DEFAULT_TIMEZONE, "HH:mm");
+  if (typeof value === "number") {
+    const totalMinutes=Math.round(value*24*60);
+    const hours=Math.floor(totalMinutes/60)%24;
+    const minutes=totalMinutes%60;
+    return String(hours).padStart(2,"0")+":"+String(minutes).padStart(2,"0");
+  }
+  const text=cleanText(value);
+  const match=text.match(/^(\d{1,2}):(\d{2})/);
+  if (match) return String(match[1]).padStart(2,"0")+":"+match[2];
+  return text;
+}
+function parseGoal(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n=Number(value);
+  if (!Number.isInteger(n) || n<0 || n>30) return null;
+  return n;
+}
+function createPlayerKey(name, whatsapp) {
+  const phone=cleanText(whatsapp).replace(/\D/g, "");
+  if (phone) return "PHONE_"+phone;
+  return "NAME_"+normalizeArabic(cleanText(name)).toLowerCase();
+}
+function cleanText(value) { return String(value === null || value === undefined ? "" : value).trim(); }
+function normalizeArabic(text) { return String(text||"").replace(/[Ø£Ø¥Ø¢]/g,"Ø§").replace(/Ù‰/g,"ÙŠ").replace(/Ø©/g,"Ù‡").replace(/\s+/g," ").trim(); }
+function json(data) { return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON); }
+
+function seedAllMatches() {
+  setupSheets();
+  const sheet=getSS().getSheetByName("All Matches");
+  const rows = [
+    ["M001","2026-06-16","19:00","ÙØ±Ù†Ø³Ø§","Ø§Ù„Ø³Ù†ØºØ§Ù„","Group I",""],
+    ["M002","2026-06-16","22:00","Ø§Ù„Ø¹Ø±Ø§Ù‚","Ø§Ù„Ù†Ø±ÙˆÙŠØ¬","Group I",""],
+    ["M003","2026-06-17","01:00","Ø§Ù„Ø£Ø±Ø¬Ù†ØªÙŠÙ†","Ø§Ù„Ø¬Ø²Ø§Ø¦Ø±","Group J",""],
+    ["M004","2026-06-17","04:00","Ø§Ù„Ù†Ù…Ø³Ø§","Ø§Ù„Ø£Ø±Ø¯Ù†","Group J",""],
+    ["M005","2026-06-17","17:00","Ø§Ù„Ø¨Ø±ØªØºØ§Ù„","Ø§Ù„ÙƒÙˆÙ†ØºÙˆ Ø§Ù„Ø¯ÙŠÙ…Ù‚Ø±Ø§Ø·ÙŠØ©","Group K",""],
+    ["M006","2026-06-17","20:00","Ø¥Ù†Ø¬Ù„ØªØ±Ø§","ÙƒØ±ÙˆØ§ØªÙŠØ§","Group L",""],
+    ["M007","2026-06-17","23:00","ØºØ§Ù†Ø§","Ø¨Ù†Ù…Ø§","Group L",""],
+    ["M008","2026-06-18","02:00","ÙƒÙˆÙ„ÙˆÙ…Ø¨ÙŠØ§","Ø£ÙˆØ²Ø¨ÙƒØ³ØªØ§Ù†","Group K",""]
+  ];
+  sheet.clearContents();
+  sheet.appendRow(["Match ID", "Date", "Time", "Team 1", "Team 2", "Stage", "Venue"]);
+  sheet.getRange(2,1,rows.length,7).setValues(rows);
+  SpreadsheetApp.flush();
+  return rows.length;
+}
